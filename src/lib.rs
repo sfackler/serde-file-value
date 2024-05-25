@@ -1,14 +1,21 @@
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
+use std::{io, path::Path};
+
+pub use de::Deserializer;
+
+mod de;
+
+pub trait Listen {
+    fn on_read(&mut self, path: &Path, contents: &[u8]);
+
+    fn on_error(&mut self, path: &Path, error: &io::Error);
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub struct NopListener;
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
+impl Listen for NopListener {
+    #[inline]
+    fn on_read(&mut self, _: &Path, _: &[u8]) {}
+
+    #[inline]
+    fn on_error(&mut self, _: &Path, _: &io::Error) {}
 }
