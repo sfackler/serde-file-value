@@ -1,15 +1,22 @@
-use std::{fmt, fs};
+use std::{fmt, fs, io, path::Path};
 
 use serde::de;
 
-use crate::Listen;
-
+/// A deserializer which automatically reads referenced files.
+///
+/// Files should be referenced like `${file:/path/to/file}`.
 pub struct Deserializer<'a, D, L> {
     de: D,
     listener: &'a mut L,
 }
 
-impl<'a, D, L> Deserializer<'a, D, L> {
+impl<'a, D, L> Deserializer<'a, D, L>
+where
+    L: FnMut(&Path, &io::Result<Vec<u8>>),
+{
+    /// Creates a new deserializer.
+    ///
+    /// The listener will be called on every referenced file read along with the result of the read.
     pub fn new(de: D, listener: &'a mut L) -> Self {
         Deserializer { de, listener }
     }
@@ -33,7 +40,7 @@ macro_rules! forward_deserialize {
 impl<'a, 'de, D, L> de::Deserializer<'de> for Deserializer<'a, D, L>
 where
     D: de::Deserializer<'de>,
-    L: Listen,
+    L: FnMut(&Path, &io::Result<Vec<u8>>),
 {
     type Error = D::Error;
 
@@ -90,25 +97,26 @@ macro_rules! forward_visit {
 
 impl<V, L> Visitor<'_, V, L>
 where
-    L: Listen,
+    L: FnMut(&Path, &io::Result<Vec<u8>>),
 {
     fn expand_str<E>(&mut self, s: &str) -> Result<Option<String>, E>
     where
         E: de::Error,
     {
         match s.strip_prefix("${file:").and_then(|s| s.strip_suffix('}')) {
-            Some(path) => match fs::read(path) {
-                Ok(contents) => {
-                    self.listener.on_read(path.as_ref(), &contents);
-                    let contents = String::from_utf8(contents)
-                        .map_err(|e| E::custom(format_args!("error parsing file {path}: {e}")))?;
-                    Ok(Some(contents))
+            Some(path) => {
+                let value = fs::read(path);
+                (self.listener)(path.as_ref(), &value);
+                match value {
+                    Ok(contents) => {
+                        let contents = String::from_utf8(contents).map_err(|e| {
+                            E::custom(format_args!("error parsing file {path}: {e}"))
+                        })?;
+                        Ok(Some(contents))
+                    }
+                    Err(e) => Err(E::custom(format_args!("error reading file {path}: {e}"))),
                 }
-                Err(e) => {
-                    self.listener.on_error(path.as_ref(), &e);
-                    Err(E::custom(format_args!("error reading file {path}: {e}")))
-                }
-            },
+            }
             None => Ok(None),
         }
     }
@@ -117,7 +125,7 @@ where
 impl<'de, V, L> de::Visitor<'de> for Visitor<'_, V, L>
 where
     V: de::Visitor<'de>,
-    L: Listen,
+    L: FnMut(&Path, &io::Result<Vec<u8>>),
 {
     type Value = V::Value;
 
@@ -243,7 +251,7 @@ where
 impl<'de, V, L> de::SeqAccess<'de> for Visitor<'_, V, L>
 where
     V: de::SeqAccess<'de>,
-    L: Listen,
+    L: FnMut(&Path, &io::Result<Vec<u8>>),
 {
     type Error = V::Error;
 
@@ -266,7 +274,7 @@ where
 impl<'de, V, L> de::MapAccess<'de> for Visitor<'_, V, L>
 where
     V: de::MapAccess<'de>,
-    L: Listen,
+    L: FnMut(&Path, &io::Result<Vec<u8>>),
 {
     type Error = V::Error;
 
@@ -300,7 +308,7 @@ where
 impl<'a, 'de, V, L> de::EnumAccess<'de> for Visitor<'a, V, L>
 where
     V: de::EnumAccess<'de>,
-    L: Listen,
+    L: FnMut(&Path, &io::Result<Vec<u8>>),
 {
     type Error = V::Error;
 
@@ -330,7 +338,7 @@ where
 impl<'de, V, L> de::VariantAccess<'de> for Visitor<'_, V, L>
 where
     V: de::VariantAccess<'de>,
-    L: Listen,
+    L: FnMut(&Path, &io::Result<Vec<u8>>),
 {
     type Error = V::Error;
 
@@ -384,7 +392,7 @@ struct DeserializeSeed<'a, S, L> {
 impl<'de, S, L> de::DeserializeSeed<'de> for DeserializeSeed<'_, S, L>
 where
     S: de::DeserializeSeed<'de>,
-    L: Listen,
+    L: FnMut(&Path, &io::Result<Vec<u8>>),
 {
     type Value = S::Value;
 

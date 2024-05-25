@@ -1,32 +1,47 @@
-use std::{io, path::Path};
-
+//! A Serde deserializer which transparently loads files as string values.
+//!
+//! # Usage
+//!
+//! Assume we have a `/mnt/secrets/my_secret` file that looks like:
+//!
+//! ```text
+//! hunter2
+//! ```
+//!
+//! And a `conf/config.json` that looks like:
+//!
+//! ```json
+//! {
+//!     "secret_value": "${file:/mnt/secrets/my_secret}"
+//! }
+//! ```
+//! ```no_run
+//! use std::{fs, io, path::Path};
+//!
+//! use serde::Deserialize;
+//!
+//! #[derive(Deserialize)]
+//! struct Config {
+//!     secret_value: String,
+//! }
+//!
+//! let config = fs::read("conf/config.json").unwrap();
+//!
+//! let mut deserializer = serde_json::Deserializer::from_slice(&config);
+//! let mut callback = |_: &Path, _: &io::Result<Vec<u8>>| {};
+//! let deserializer = serde_file_value::Deserializer::new(&mut deserializer, &mut callback);
+//! let config = Config::deserialize(deserializer).unwrap();
+//!
+//! assert_eq!(config.secret_value, "hunter2");
+//! ```
+#![warn(missing_docs)]
 pub use de::Deserializer;
 
 mod de;
 
-pub trait Listen {
-    fn on_read(&mut self, path: &Path, contents: &[u8]);
-
-    fn on_error(&mut self, path: &Path, error: &io::Error);
-}
-
-pub struct NopListener;
-
-impl Listen for NopListener {
-    #[inline]
-    fn on_read(&mut self, _: &Path, _: &[u8]) {}
-
-    #[inline]
-    fn on_error(&mut self, _: &Path, _: &io::Error) {}
-}
-
 #[cfg(test)]
 mod test {
-    use std::{
-        collections::{HashMap, HashSet},
-        fs,
-        path::PathBuf,
-    };
+    use std::{fs, io, path::Path};
 
     use serde::Deserialize;
     use tempfile::NamedTempFile;
@@ -42,22 +57,6 @@ mod test {
     struct Subconfig {
         file: Vec<String>,
         inline: String,
-    }
-
-    #[derive(Debug, PartialEq)]
-    struct TestListener {
-        files: HashMap<PathBuf, Vec<u8>>,
-        errors: HashSet<PathBuf>,
-    }
-
-    impl Listen for TestListener {
-        fn on_read(&mut self, path: &Path, contents: &[u8]) {
-            self.files.insert(path.to_owned(), contents.to_owned());
-        }
-
-        fn on_error(&mut self, path: &Path, _: &io::Error) {
-            self.errors.insert(path.to_owned());
-        }
     }
 
     #[test]
@@ -79,12 +78,12 @@ mod test {
             file.path().display(),
         );
 
-        let mut listener = TestListener {
-            files: HashMap::new(),
-            errors: HashSet::new(),
-        };
         let mut deserializer = serde_json::Deserializer::from_str(&config);
-        let deserializer = Deserializer::new(&mut deserializer, &mut listener);
+        let mut files = vec![];
+        let mut cb = |path: &Path, r: &io::Result<Vec<u8>>| {
+            files.push((path.to_owned(), r.as_ref().ok().cloned()))
+        };
+        let deserializer = Deserializer::new(&mut deserializer, &mut cb);
 
         let config = Config::deserialize(deserializer).unwrap();
 
@@ -97,11 +96,8 @@ mod test {
 
         assert_eq!(config, expected);
 
-        let expected = TestListener {
-            files: HashMap::from([(file.path().to_owned(), "hunter2".as_bytes().to_vec())]),
-            errors: HashSet::new(),
-        };
-        assert_eq!(listener, expected);
+        let expected = vec![(file.path().to_owned(), Some("hunter2".as_bytes().to_vec()))];
+        assert_eq!(files, expected);
     }
 
     #[test]
@@ -111,19 +107,16 @@ mod test {
 
         let config = format!("\"${{file:{}}}\"", file.display());
 
-        let mut listener = TestListener {
-            files: HashMap::new(),
-            errors: HashSet::new(),
-        };
         let mut deserializer = serde_json::Deserializer::from_str(&config);
-        let deserializer = Deserializer::new(&mut deserializer, &mut listener);
+        let mut files = vec![];
+        let mut cb = |path: &Path, r: &io::Result<Vec<u8>>| {
+            files.push((path.to_owned(), r.as_ref().ok().cloned()))
+        };
+        let deserializer = Deserializer::new(&mut deserializer, &mut cb);
 
         String::deserialize(deserializer).unwrap_err();
 
-        let expected = TestListener {
-            files: HashMap::new(),
-            errors: HashSet::from([file]),
-        };
-        assert_eq!(listener, expected);
+        let expected = vec![(file.to_path_buf(), None)];
+        assert_eq!(files, expected);
     }
 }
