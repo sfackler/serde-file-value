@@ -43,14 +43,16 @@ mod de;
 
 /// Entry point.
 ///
+/// The listener will be called on every referenced file read along with the result of the read.
+///
 /// See crate documentation for an example.
-pub fn deserialize<'de, D, F, T>(deserializer: D, mut callback: F) -> Result<T, D::Error>
+pub fn deserialize<'de, D, F, T>(deserializer: D, mut listener: F) -> Result<T, D::Error>
 where
     D: serde::Deserializer<'de>,
     F: FnMut(&Path, &io::Result<Vec<u8>>),
     T: Deserialize<'de>,
 {
-    T::deserialize(Deserializer::new(deserializer, &mut callback))
+    T::deserialize(Deserializer::new(deserializer, &mut listener))
 }
 
 #[cfg(test)]
