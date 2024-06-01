@@ -28,16 +28,30 @@
 //! let config = fs::read("conf/config.json").unwrap();
 //!
 //! let mut deserializer = serde_json::Deserializer::from_slice(&config);
-//! let mut callback = |_: &Path, _: &io::Result<Vec<u8>>| {};
-//! let deserializer = serde_file_value::Deserializer::new(&mut deserializer, &mut callback);
-//! let config = Config::deserialize(deserializer).unwrap();
+//! let config: Config = serde_file_value::deserialize(&mut deserializer, |_, _| ()).unwrap();
 //!
 //! assert_eq!(config.secret_value, "hunter2");
 //! ```
 #![warn(missing_docs)]
+
+use std::{io, path::Path};
+
 pub use de::Deserializer;
+use serde::Deserialize;
 
 mod de;
+
+/// Entry point.
+///
+/// See crate documentation for an example.
+pub fn deserialize<'de, D, F, T>(deserializer: D, mut callback: F) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    F: FnMut(&Path, &io::Result<Vec<u8>>),
+    T: Deserialize<'de>,
+{
+    T::deserialize(Deserializer::new(deserializer, &mut callback))
+}
 
 #[cfg(test)]
 mod test {
