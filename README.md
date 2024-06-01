@@ -2,7 +2,7 @@
 
 [Documentation](https://docs.rs/serde-file-value)
 
-A Serde deserializer which transparently reads from referenced files
+A Serde deserializer which transparently loads files as string values.
 
 ## License
 
